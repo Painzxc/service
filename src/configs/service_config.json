@@ -1,6 +1,6 @@
 {
     "name_of_classifier": "resnet50",
-    "path_to_classifier": "C:\\Users\\Admin\\Desktop\\Coding\\repos\\project\\resnet50_best_loss.pth",
+    "path_to_classifier": "resnet50_best_loss.pth",
     "name_of_detector": "yolov8",
-    "path_to_detector": "C:\\Users\\Admin\\Desktop\\Coding\\repos\\project\\222.pt"
+    "path_to_detector": "222.pt"
 }
