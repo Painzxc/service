@@ -1,0 +1,52 @@
+[project]
+name = "SimplePythonProject"
+description = "Example of simple Python project"
+readme = "README.md"
+requires-python = ">=3.7"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  ".", 
+  "src",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src", "tests"]
+
+[tool.coverage.paths]
+source = ["src"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__ == .__main__.:",
+]
+show_missing = true
+
+
+[tool.mypy]
+check_untyped_defs = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+ignore_missing_imports = true
+module = ["src.tools"]
+
+[tool.ruff]
+src = ["src"]  # first-party
+
+[tool.ruff.lint]
+extend-select = [
+  # "D",   # pydocstyle
+  "I",  # isort
+  "B",  # flake8-bugbear
+  "S",  # flake8-bandit
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*.py" = ["S101"]

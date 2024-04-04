@@ -1,0 +1,4 @@
+opencv-python==4.9.0.80
+pillow==10.2.0
+fastapi[full]==0.110.0
+pydantic==2.6.4
