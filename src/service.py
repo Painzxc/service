@@ -1,22 +1,18 @@
-from PIL import Image
-import io
-import json
-import logging
-import pydantic
-import numpy as np
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Response
+from fastapi.responses import FileResponse
+import shutil
+import os
+import cv2
 from ultralytics import YOLO
-from typing import List
-
-from fastapi import FastAPI, File, UploadFile, status
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
-
+import pydantic
+import json
+from src.datacontract.service_config import ServiceConfig
 import torch
-from torchvision import transforms
+from src.datacontract.service_output import VideoOutput, Сlass1
+import torch
+import torchvision.transforms as transforms
+from PIL import Image
 
-logging.basicConfig()
-logger = logging.getLogger(__name__)
-logger.setLevel(level=logging.INFO)
 
 app = FastAPI()
 
@@ -24,38 +20,16 @@ service_config_path = "./src/configs/service_config.json"
 with open(service_config_path, "r") as service_config:
     service_config_json = json.load(service_config)
 
-
-class ServiceConfig(pydantic.BaseModel):
-    name_of_classifier: str
-    path_to_classifier: str
-    name_of_detector: str
-    path_to_detector: str
-
-
 service_config_adapter = pydantic.TypeAdapter(ServiceConfig)
 service_config_python = service_config_adapter.validate_python(service_config_json)
 
 
-class ImageDimensions(pydantic.BaseModel):
-    width: int
-    height: int
-    channels: int = pydantic.Field(default=3)
+# Initialize YOLO model (replace with your model path)
+model = YOLO(service_config_python.path_to_detector)
 
-
-class CropCoordinates(pydantic.BaseModel):
-    xtl: int
-    ytl: int
-    xbr: int
-    ybr: int
-
-
-class ServiceOutput(pydantic.BaseModel):
-    image_dimensions: ImageDimensions
-    ships: List[CropCoordinates | None]
-    planes: List[CropCoordinates | None]
-
-
-detector = YOLO(service_config_python.path_to_detector)
+# Define the directory to save uploaded videos
+UPLOAD_DIRECTORY = "./uploaded_videos/"
+os.makedirs(UPLOAD_DIRECTORY, exist_ok=True)
 
 
 def load_classifier(path_to_pth_weights, device):
@@ -68,72 +42,112 @@ def load_classifier(path_to_pth_weights, device):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 classifier = load_classifier(service_config_python.path_to_classifier, device)
 
-class_names = ["Aircraft", "Ship"]  # Replace this with your list of class names
+class_names = ["Aircraft", "Ship"]
 
 
-@app.get(
-    "/health",
-    tags=["healthcheck"],
-    summary="Perform a Health Check",
-    response_description="Return HTTP Status Code 200 (OK)",
-    status_code=status.HTTP_200_OK,
-)
-def health_check() -> str:
-    return '{"Status" : "OK"}'
+@app.post("/video/")
+async def process_video(video: UploadFile = File(...)):
+    # Save the uploaded video to the upload directory
+    video_path = os.path.join(UPLOAD_DIRECTORY, video.filename)
 
+    try:
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
 
-@app.post("/file/", response_model=ServiceOutput)
-async def inference(image: UploadFile = UploadFile(...)):
-    image_content = await image.read()
-    image = Image.open(io.BytesIO(image_content))
-    image = image.convert("RGB")
-    transform = transforms.Resize((640, 640))
-    image = transform(image)
-    cv_image = np.array(image)
-    logger.info(f"Received image of dimensions: {cv_image.shape}")
+        # Process the video asynchronously
+        output_video_path = await process_video_file(video_path)
 
-    output_dict = {
-        "image_dimensions": ImageDimensions(
-            width=cv_image.shape[1], height=cv_image.shape[0]
-        ),
-        "ships": [],
-        "planes": [],
-    }
+        # Create VideoOutput object with only the video path
+        video_output = VideoOutput(video_path=output_video_path)
 
-    detector_outputs = detector(cv_image)
-    for box in detector_outputs[0].boxes.xyxy:
+        return video_output
 
-        xtl, ytl, xbr, ybr = box.tolist()
-        crop_object = cv_image[int(ytl) : int(ybr), int(xtl) : int(xbr)]
-        transform = transforms.Compose(
-            [
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-            ]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
-        crop_tensor = transform(Image.fromarray(crop_object))
-        crop_tensor = torch.unsqueeze(crop_tensor, 0)
-        class_id = classify_image(classifier, crop_tensor)
-        class_name = class_names[class_id]
-        if class_name == "Aircraft":
-            output_dict["planes"].append(
-                CropCoordinates(xtl=int(xtl), xbr=int(xbr), ytl=int(ytl), ybr=int(ybr))
-            )
-        elif class_name == "Ship":
-            output_dict["ships"].append(
-                CropCoordinates(xtl=int(xtl), xbr=int(xbr), ytl=int(ytl), ybr=int(ybr))
-            )
-
-    service_output = ServiceOutput(**output_dict)
-    service_output_json = jsonable_encoder(service_output)
-
-    return JSONResponse(content=service_output_json)
 
 
-def classify_image(classifier, image):
-    with torch.no_grad():
-        output = classifier(image.to(device))
-        _, predicted = torch.max(output, 1)
-    return predicted.item()
+async def process_video_file(video_path):
+    # Open the video file
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Error opening video file"
+        )
+
+    # Define the codec and create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    output_video_path = os.path.join(
+        UPLOAD_DIRECTORY, "output_" + os.path.basename(video_path)
+    )
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Convert the frame to RGB for YOLO
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Perform object detection
+        results = model(frame_rgb)
+
+        # Check if objects are detected
+        if len(results) > 0:
+            # Loop through each detected object
+            for box in results[0].boxes.xyxy:
+                xtl, ytl, xbr, ybr = map(int, box.tolist())
+                cv2.rectangle(frame, (xtl, ytl), (xbr, ybr), (0, 255, 0), 2)
+
+                # Crop the object from the frame
+                crop_object = frame[ytl:ybr, xtl:xbr]
+
+                # Convert the crop to PIL Image
+                crop_pil = Image.fromarray(cv2.cvtColor(crop_object, cv2.COLOR_BGR2RGB))
+
+                # Preprocess the crop
+                preprocess = transforms.Compose(
+                    [
+                        transforms.Resize(256),
+                        transforms.CenterCrop(224),
+                        transforms.ToTensor(),
+                        transforms.Normalize(
+                            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                        ),
+                    ]
+                )
+                input_tensor = preprocess(crop_pil).unsqueeze(0).to(device)
+
+                # Perform classification
+                with torch.no_grad():
+                    output = classifier(input_tensor)
+                _, predicted_idx = torch.max(output, 1)
+
+                # Get the predicted class label
+                predicted_label = class_names[predicted_idx.item()]
+
+                # Draw the predicted label on the frame
+                cv2.putText(
+                    frame,
+                    predicted_label,
+                    (xtl, ytl - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    2,
+                )
+                video = Сlass1(class1_arg=predicted_label)
+
+        # Write the frame into the output video
+        out.write(frame)
+
+    # Release the video resources
+    cap.release()
+    out.release()
+
+    return output_video_path, video

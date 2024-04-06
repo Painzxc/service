@@ -2,5 +2,5 @@
     "name_of_classifier": "resnet50",
     "path_to_classifier": "resnet50_best_loss.pth",
     "name_of_detector": "yolov8",
-    "path_to_detector": "yolo.pt"
+    "path_to_detector": "yolov8_nvidia2.pt"
 }

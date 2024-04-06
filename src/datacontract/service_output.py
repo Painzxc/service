@@ -1,32 +1,12 @@
-from typing import List
-
-import pydantic
-
-
-class Ship(pydantic.BaseModel):
-    """Датаконтракт выхода сервиса"""
-
-    width: int = pydantic.Field(default=640)
-    """Ширина преобразованного изображения"""
-    height: int = pydantic.Field(default=480)
-    """Высота преобразованного изображения"""
-    channels: int = pydantic.Field(default=3)
-    """Число каналов преобразованного изображения"""
+from pydantic import BaseModel
+from typing import List, Tuple, Dict
 
 
-class Plane(pydantic.BaseModel):
-    """Датаконтракт выхода сервиса"""
-
-    width: int = pydantic.Field(default=640)
-    """Ширина преобразованного изображения"""
-    height: int = pydantic.Field(default=480)
-    """Высота преобразованного изображения"""
-    channels: int = pydantic.Field(default=3)
-    """Число каналов преобразованного изображения"""
+class VideoOutput:
+    def __init__(self, video_path: str):
+        self.video_path = video_path
 
 
-class ServiceOutput(pydantic.BaseModel):
-    """Датаконтракт выхода сервиса"""
-
-    ships: List[Ship | None]
-    planes: List[Plane | None]
+class Сlass1:
+    def __init__(self, class1_arg):
+        self.class1_arg = class1_arg
